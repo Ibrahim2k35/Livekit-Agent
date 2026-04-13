@@ -51,6 +51,7 @@ Run (production):
 """
 
 import logging
+import os
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -78,6 +79,19 @@ logging.basicConfig(
     format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
 )
 logger = logging.getLogger("fast-voice-agent")
+
+# ---------------------------------------------------------------------------
+# Runtime tuning knobs (override from .env without code edits)
+# ---------------------------------------------------------------------------
+STT_MODEL = os.getenv("STT_MODEL", "gpt-4o-mini-transcribe")
+LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
+TTS_MODEL = os.getenv("TTS_MODEL", "gpt-4o-mini-tts")
+TTS_VOICE = os.getenv("TTS_VOICE", "alloy")
+TTS_SPEED = float(os.getenv("TTS_SPEED_FACTOR", "1.15"))
+USE_TURN_DETECTOR = os.getenv("USE_TURN_DETECTOR", "false").strip().lower() == "true"
+MIN_ENDPOINTING_DELAY = float(os.getenv("MIN_ENDPOINTING_DELAY", "0.12"))
+MIN_SILENCE_DURATION = float(os.getenv("MIN_SILENCE_DURATION", "0.15"))
+VAD_ACTIVATION_THRESHOLD = float(os.getenv("VAD_ACTIVATION_THRESHOLD", "0.45"))
 
 
 # ---------------------------------------------------------------------------
@@ -119,33 +133,36 @@ async def entrypoint(ctx: JobContext) -> None:
     await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
     logger.info(f"Room connected: {ctx.room.name}")
 
+    # Semantic turn detection improves natural timing but can add latency.
+    turn_detection = EnglishModel() if USE_TURN_DETECTOR else None
+
     session = AgentSession(
 
-        min_endpointing_delay=0.2,
+        min_endpointing_delay=MIN_ENDPOINTING_DELAY,
 
 
         vad=silero.VAD.load(
-            min_silence_duration=0.2,       # reduced from 0.3 to fire faster
-            activation_threshold=0.5,       # 0-1, lower = more sensitive
+            min_silence_duration=MIN_SILENCE_DURATION,
+            activation_threshold=VAD_ACTIVATION_THRESHOLD,
             min_speech_duration=0.05,       # ignore sub-50ms noise bursts
         ),
 
-        turn_detection=EnglishModel(),
+        turn_detection=turn_detection,
 
         stt=openai.STT(
-            model="gpt-4o-transcribe",
+            model=STT_MODEL,
             language="en",              # explicit lang → skips auto-detect step
         ),
 
         llm=openai.LLM(
-            model="gpt-4o-mini",
-            temperature=0.7,
+            model=LLM_MODEL,
+            temperature=0.3,
         ),
 
         tts=openai.TTS(
-            model="gpt-4o-mini-tts",
-            voice="alloy",
-            speed=1.1,                  # increase to 1.1-1.2 for snappier feel
+            model=TTS_MODEL,
+            voice=TTS_VOICE,
+            speed=TTS_SPEED,
         ),
     )
 
